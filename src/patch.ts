@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { homedir } from 'node:os';
+import { execSync } from 'node:child_process';
 
 // 补丁定义：[特征字符串, 替换字符串, 说明]
 const PATCHES: Array<[string, string, string]> = [
@@ -31,18 +32,59 @@ const PATCHES: Array<[string, string, string]> = [
   ],
 ];
 
-/** 查找 claude.exe 路径 */
+/** 查找 claude 可执行文件路径 */
 function findClaudeExe(): string | null {
-  const candidates = [
-    path.join(homedir(), '.local', 'bin', 'claude.exe'),
-    path.join(homedir(), '.local', 'bin', 'claude'),
-    // npm 全局安装
-    path.join(homedir(), 'AppData', 'Roaming', 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js'),
-  ];
+  const home = homedir();
 
+  // 1. which/where（最可靠）
+  try {
+    const cmd = process.platform === 'win32' ? 'where claude 2>nul' : 'which claude 2>/dev/null';
+    const p = execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim().split('\n')[0].trim();
+    if (p && fs.existsSync(p)) return p;
+  } catch { /* ignore */ }
+
+  // 2. 常见安装路径
+  const candidates = [
+    path.join(home, '.local', 'bin', 'claude.exe'),
+    path.join(home, '.local', 'bin', 'claude'),
+    path.join(home, 'AppData', 'Roaming', 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js'),
+    path.join(home, 'AppData', 'Roaming', 'npm', 'claude.cmd'),
+    path.join(home, 'scoop', 'shims', 'claude.exe'),
+    path.join('C:', 'ProgramData', 'chocolatey', 'bin', 'claude.exe'),
+    path.join('C:', 'Program Files', 'Claude Code', 'claude.exe'),
+    path.join('C:', 'Program Files (x86)', 'Claude Code', 'claude.exe'),
+    path.join(home, 'AppData', 'Local', 'Programs', 'claude-code', 'claude.exe'),
+    path.join(home, 'AppData', 'Local', 'claude-code', 'claude.exe'),
+    path.join(home, 'AppData', 'Local', 'AnthropicClaude', 'claude.exe'),
+    '/usr/local/bin/claude',
+    '/opt/homebrew/bin/claude',
+    '/usr/bin/claude',
+    '/snap/bin/claude',
+  ];
   for (const p of candidates) {
     if (fs.existsSync(p)) return p;
   }
+
+  // 3. npm global prefix 动态查找
+  try {
+    const prefix = execSync('npm config get prefix', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    if (prefix) {
+      for (const c of [path.join(prefix, 'claude.cmd'), path.join(prefix, 'claude'), path.join(prefix, 'bin', 'claude')]) {
+        if (fs.existsSync(c)) return c;
+      }
+    }
+  } catch { /* ignore */ }
+
+  // 4. PATH 逐目录搜索（兜底）
+  const pathDirs = (process.env.PATH || '').split(process.platform === 'win32' ? ';' : ':');
+  const exeNames = process.platform === 'win32' ? ['claude.exe', 'claude.cmd'] : ['claude'];
+  for (const dir of pathDirs) {
+    for (const name of exeNames) {
+      const p = path.join(dir, name);
+      if (fs.existsSync(p)) return p;
+    }
+  }
+
   return null;
 }
 

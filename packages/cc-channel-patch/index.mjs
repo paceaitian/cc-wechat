@@ -39,26 +39,77 @@ const PATCHES = [
 // ─── 查找 claude 可执行文件 ──────────────────────────────
 
 function findClaude() {
-  // 1. which/where 查找
+  // 1. which/where 查找（最可靠，覆盖所有自定义安装路径）
   try {
-    const p = execSync(process.platform === 'win32' ? 'where claude' : 'which claude', {
+    const cmd = process.platform === 'win32' ? 'where claude 2>nul' : 'which claude 2>/dev/null';
+    const p = execSync(cmd, {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim().split('\n')[0].trim();
     if (p && fs.existsSync(p)) return p;
   } catch { /* ignore */ }
 
-  // 2. 常见路径
+  // 2. 常见安装路径（覆盖各种安装方式）
   const home = homedir();
   const candidates = [
+    // Claude Code native installer（默认）
     path.join(home, '.local', 'bin', 'claude.exe'),
     path.join(home, '.local', 'bin', 'claude'),
+    // npm 全局安装
     path.join(home, 'AppData', 'Roaming', 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js'),
+    path.join(home, 'AppData', 'Roaming', 'npm', 'claude.cmd'),
+    // scoop / chocolatey / winget 等 Windows 包管理器
+    path.join(home, 'scoop', 'shims', 'claude.exe'),
+    path.join('C:', 'ProgramData', 'chocolatey', 'bin', 'claude.exe'),
+    // Program Files
+    path.join('C:', 'Program Files', 'Claude Code', 'claude.exe'),
+    path.join('C:', 'Program Files (x86)', 'Claude Code', 'claude.exe'),
+    // AppData 常见路径
+    path.join(home, 'AppData', 'Local', 'Programs', 'claude-code', 'claude.exe'),
+    path.join(home, 'AppData', 'Local', 'claude-code', 'claude.exe'),
+    path.join(home, 'AppData', 'Local', 'AnthropicClaude', 'claude.exe'),
+    // macOS
     '/usr/local/bin/claude',
+    '/opt/homebrew/bin/claude',
+    path.join(home, '.nvm', 'versions', 'node'),  // 标记，下面特殊处理
+    // Linux
+    '/usr/bin/claude',
+    '/snap/bin/claude',
   ];
+
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
   }
+
+  // 3. npm global prefix 动态查找（覆盖自定义 npm prefix）
+  try {
+    const prefix = execSync('npm config get prefix', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    if (prefix) {
+      const npmCandidates = [
+        path.join(prefix, 'claude.cmd'),
+        path.join(prefix, 'claude'),
+        path.join(prefix, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js'),
+        path.join(prefix, 'bin', 'claude'),
+      ];
+      for (const c of npmCandidates) {
+        if (fs.existsSync(c)) return c;
+      }
+    }
+  } catch { /* ignore */ }
+
+  // 4. PATH 环境变量逐目录搜索（兜底）
+  const pathDirs = (process.env.PATH || '').split(process.platform === 'win32' ? ';' : ':');
+  const exeNames = process.platform === 'win32' ? ['claude.exe', 'claude.cmd'] : ['claude'];
+  for (const dir of pathDirs) {
+    for (const name of exeNames) {
+      const p = path.join(dir, name);
+      if (fs.existsSync(p)) return p;
+    }
+  }
+
   return null;
 }
 
