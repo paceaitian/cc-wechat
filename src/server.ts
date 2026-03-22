@@ -49,7 +49,18 @@ async function extractText(msg: WeixinMessage): Promise<string> {
     const t = item.type ?? 0;
 
     if (t === MessageItemType.TEXT) {
-      if (item.text_item?.text) parts.push(item.text_item.text);
+      if (item.text_item?.text) {
+        // 提取引用回复内容
+        if (item.ref_msg) {
+          const refTitle = item.ref_msg.title ?? '';
+          const refText = item.ref_msg.message_item?.text_item?.text ?? '';
+          const refContent = refTitle || refText;
+          if (refContent) {
+            parts.push(`[引用: ${refContent}]`);
+          }
+        }
+        parts.push(item.text_item.text);
+      }
     } else if (t === MessageItemType.IMAGE) {
       let desc = '[图片]';
       if (item.image_item?.media?.encrypt_query_param && item.image_item?.media?.aes_key) {
@@ -97,9 +108,10 @@ const server = new Server(
       experimental: { 'claude/channel': {} },
       tools: {},
     },
-    instructions: `Messages arrive as <channel source="wechat-channel" user_id="..." context_token="...">.
+    instructions: `Messages arrive as <channel source="wechat-channel" user_id="..." context_token="..." message_id="...">.
 Reply using the reply tool. Pass user_id and context_token from the channel tag.
 For media: set media to an absolute local file path to send image/video/file.
+For quote reply: set reply_to_message_id to the message_id from the channel tag to send a quoted reply.
 IMPORTANT: Always use the reply tool to respond to WeChat messages. Do not just output text.`,
   },
 );
@@ -126,6 +138,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           context_token: { type: 'string', description: '会话上下文令牌（来自消息 meta 的 context_token）' },
           content: { type: 'string', description: '回复文本内容' },
           media: { type: 'string', description: '可选：本地文件绝对路径，发送图片/视频/文件' },
+          reply_to_message_id: { type: 'string', description: '可选：引用回复的原消息 ID（来自 meta 的 message_id）' },
         },
         required: ['user_id', 'context_token', 'content'],
       },
@@ -166,6 +179,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const contextToken = args?.context_token as string | undefined;
     const content = args?.content as string | undefined;
     const media = args?.media as string | undefined;
+    const replyToMessageId = args?.reply_to_message_id as string | undefined;
 
     // 验证必填参数
     if (!userId || !contextToken || !content) {
@@ -208,11 +222,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // typing 失败不阻塞
       }
 
-      // 清理 Markdown 并分段发送
+      // 清理 Markdown 并分段发送（第一段带引用回复）
       const plainText = stripMarkdown(content);
       const chunks = chunkText(plainText, 3900);
-      for (const chunk of chunks) {
-        await sendMessage(account.token, userId, chunk, contextToken, account.baseUrl);
+      for (let i = 0; i < chunks.length; i++) {
+        const refId = i === 0 ? replyToMessageId : undefined;
+        await sendMessage(account.token, userId, chunks[i], contextToken, account.baseUrl, refId);
       }
 
       // 发送媒体文件（如有）

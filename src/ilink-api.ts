@@ -178,27 +178,34 @@ export async function getUpdates(
   }
 }
 
-/** 发送文本消息，返回 client_id */
+/** 发送文本消息，返回 client_id。支持引用回复（ref_msg） */
 export async function sendMessage(
   token: string,
   to: string,
   text: string,
   contextToken: string,
   baseUrl?: string,
+  refMsgId?: string,
 ): Promise<string> {
   const clientId = `cc-wechat-${randomBytes(4).toString('hex')}`;
-  const body = JSON.stringify({
-    msg: {
-      from_user_id: '',
-      to_user_id: to,
-      client_id: clientId,
-      message_type: 2,
-      message_state: 2,
-      item_list: [{ type: 1, text_item: { text } }],
-      context_token: contextToken,
-    },
-    base_info: buildBaseInfo(),
-  });
+  // 构造消息内容项，支持引用回复
+  const textItem: Record<string, unknown> = { type: 1, text_item: { text } };
+  if (refMsgId) {
+    textItem.ref_msg = { title: text.slice(0, 40) };
+  }
+  const msg: Record<string, unknown> = {
+    from_user_id: '',
+    to_user_id: to,
+    client_id: clientId,
+    message_type: 2,
+    message_state: 2,
+    item_list: [textItem],
+    context_token: contextToken,
+  };
+  if (refMsgId) {
+    msg.ref_message_id = refMsgId;
+  }
+  const body = JSON.stringify({ msg, base_info: buildBaseInfo() });
   await apiFetch({
     baseUrl,
     endpoint: 'ilink/bot/sendmessage',
