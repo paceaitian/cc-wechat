@@ -1,0 +1,11 @@
+{
+  "name": "cc-channel-patch",
+  "version": "0.1.0",
+  "description": "One-command patch to enable Claude Code Channels (bypasses tengu_harbor feature flag)",
+  "type": "module",
+  "bin": {
+    "cc-channel-patch": "index.mjs"
+  },
+  "engines": { "node": ">=18" },
+  "license": "MIT"
+}
