@@ -32,7 +32,12 @@ export async function loginTerminal(baseUrl?: string): Promise<LoginResult> {
   const qrTerminal = (qrMod as unknown as { default: { generate: (text: string, opts: { small: boolean }, cb: (qr: string) => void) => void } }).default ?? qrMod;
 
   for (let qrRefreshCount = 0; qrRefreshCount < MAX_QR_REFRESH; qrRefreshCount++) {
-    const qrResp = await getQRCode(baseUrl);
+    let qrResp;
+    try {
+      qrResp = await getQRCode(baseUrl);
+    } catch (err) {
+      throw new Error(`获取二维码失败（网络错误）: ${(err as Error).message ?? err}`);
+    }
 
     // 输出 ASCII 二维码到 stderr
     await new Promise<void>((resolve) => {

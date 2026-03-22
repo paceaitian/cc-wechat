@@ -140,7 +140,7 @@ export async function pollQRStatus(
     });
     return JSON.parse(text) as QRStatusResponse;
   } catch (err: unknown) {
-    if (err instanceof Error && err.name === 'AbortError') {
+    if (err instanceof Error && err.name === 'AbortError' || (err as { name?: string })?.name === 'AbortError') {
       return { status: 'wait' };
     }
     throw err;
@@ -171,7 +171,7 @@ export async function getUpdates(
     });
     return JSON.parse(text) as GetUpdatesResp;
   } catch (err: unknown) {
-    if (err instanceof Error && err.name === 'AbortError') {
+    if (err instanceof Error && err.name === 'AbortError' || (err as { name?: string })?.name === 'AbortError') {
       return { ret: 0, msgs: [], get_updates_buf: buf };
     }
     throw err;
