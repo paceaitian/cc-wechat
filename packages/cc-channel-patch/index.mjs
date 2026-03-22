@@ -113,16 +113,68 @@ function findClaude() {
   return null;
 }
 
+// ─── 解析到真正的可 patch 文件 ─────────────────────────────
+
+/**
+ * findClaude() 可能返回 .cmd wrapper 或符号链接。
+ * 此函数解析到真正包含代码的文件（exe 二进制或 cli.js）。
+ * 对于 npm 全局安装的 CC，.cmd 旁边有 node_modules/@anthropic-ai/claude-code/cli.js
+ */
+function resolvePatchTarget(claudePath) {
+  const ext = path.extname(claudePath).toLowerCase();
+  const dir = path.dirname(claudePath);
+
+  // 如果已经是 .exe 或大文件（>1MB），直接 patch
+  if (ext === '.exe') return claudePath;
+  const stat = fs.statSync(claudePath);
+  if (stat.size > 1_000_000) return claudePath;
+
+  // .cmd / 小文件 → 是 npm wrapper，查找真正的 cli.js
+  // 策略 1：同目录下 node_modules/@anthropic-ai/claude-code/cli.js
+  const cliJs = path.join(dir, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js');
+  if (fs.existsSync(cliJs)) return cliJs;
+
+  // 策略 2：读取 .cmd 内容，提取实际路径
+  if (ext === '.cmd') {
+    try {
+      const content = fs.readFileSync(claudePath, 'utf-8');
+      // npm .cmd 格式：@IF EXIST "%~dp0\node.exe" (...) ELSE (... "%~dp0\node_modules\@anthropic-ai\claude-code\cli.js" ...)
+      const match = content.match(/node_modules[\\/]@anthropic-ai[\\/]claude-code[\\/]cli\.js/);
+      if (match) {
+        const resolved = path.join(dir, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js');
+        if (fs.existsSync(resolved)) return resolved;
+      }
+    } catch { /* ignore */ }
+  }
+
+  // 策略 3：如果是 symlink，resolve 到真实路径
+  try {
+    const realPath = fs.realpathSync(claudePath);
+    if (realPath !== claudePath) {
+      return resolvePatchTarget(realPath);
+    }
+  } catch { /* ignore */ }
+
+  // 兜底：原路径
+  return claudePath;
+}
+
 // ─── patch ──────────────────────────────────────────────
 
 function patch() {
   console.log('\n  cc-channel-patch — 启用 Claude Code Channels\n');
 
-  const exePath = findClaude();
-  if (!exePath) {
+  const claudePath = findClaude();
+  if (!claudePath) {
     console.error('  找不到 Claude Code 可执行文件。');
     console.error('  请确认已安装 Claude Code 并在 PATH 中。\n');
     process.exit(1);
+  }
+
+  const exePath = resolvePatchTarget(claudePath);
+  console.log(`  查找: ${claudePath}`);
+  if (exePath !== claudePath) {
+    console.log(`  解析: ${exePath}`);
   }
   console.log(`  目标: ${exePath}`);
 
@@ -223,11 +275,13 @@ function patch() {
 function unpatch() {
   console.log('\n  cc-channel-patch unpatch — 恢复原始 Claude Code\n');
 
-  const exePath = findClaude();
-  if (!exePath) {
+  const claudePath = findClaude();
+  if (!claudePath) {
     console.error('  找不到 Claude Code。\n');
     process.exit(1);
   }
+
+  const exePath = resolvePatchTarget(claudePath);
 
   const backupPath = exePath + '.bak';
   if (!fs.existsSync(backupPath)) {
