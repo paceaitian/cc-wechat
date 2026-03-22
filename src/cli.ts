@@ -20,6 +20,8 @@ function help(): void {
 
   命令:
     install   注册 MCP server + 扫码登录
+    patch     修补 Claude Code 以启用 Channels 功能
+    unpatch   恢复原始 Claude Code
     login     重新扫码登录
     status    查看连接状态
     help      显示帮助
@@ -107,6 +109,12 @@ const command = process.argv[2];
 switch (command) {
   case 'install': case 'setup': install(); break;
   case 'login': login(); break;
+  case 'patch': case 'unpatch': {
+    // 动态导入 patch 模块，传递命令
+    process.argv[2] = command;
+    await import('./patch.js');
+    break;
+  }
   case 'status': status(); break;
   case 'help': case '--help': case '-h': case undefined: help(); break;
   default: console.error(`未知命令: ${command}`); help(); process.exit(1);
