@@ -1,6 +1,6 @@
 {
   "name": "cc-channel-patch",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "One-command patch to enable Claude Code Channels (bypasses tengu_harbor feature flag)",
   "type": "module",
   "bin": {

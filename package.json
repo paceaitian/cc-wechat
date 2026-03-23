@@ -1,6 +1,6 @@
 {
   "name": "cc-wechat",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "WeChat channel for Claude Code via iLink Bot API",
   "type": "module",
   "bin": {
