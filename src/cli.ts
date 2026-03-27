@@ -7,8 +7,6 @@
 import './proxy.js';
 
 import { execSync } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { loginTerminal } from './auth.js';
 import { saveAccount, getActiveAccount } from './store.js';
 
@@ -37,21 +35,16 @@ function help(): void {
 async function install(): Promise<void> {
   console.log('\n🔧 cc-wechat 安装向导\n');
 
-  // [1/3] 注册 MCP server
+  // [1/3] 注册 MCP server（先删后加，确保旧格式也被纠正）
   console.log('[1/3] 注册 MCP server...');
-  const serverPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'server.js');
-
   try {
-    execSync('claude mcp add -s user wechat-channel node ' + serverPath, { stdio: 'pipe' });
+    execSync('claude mcp remove -s user wechat-channel', { stdio: 'pipe' });
+  } catch { /* 不存在则忽略 */ }
+  try {
+    execSync('claude mcp add -s user wechat-channel -- npx -y cc-wechat@latest', { stdio: 'pipe' });
     console.log('  ✅ MCP server 已注册');
-  } catch {
-    try {
-      execSync('claude mcp remove wechat-channel', { stdio: 'pipe' });
-      execSync('claude mcp add -s user wechat-channel node ' + serverPath, { stdio: 'pipe' });
-      console.log('  ✅ MCP server 已重新注册');
-    } catch (e) {
-      console.error('  ❌ MCP server 注册失败:', (e as Error).message);
-    }
+  } catch (e) {
+    console.error('  ❌ MCP server 注册失败:', (e as Error).message);
   }
 
   // [2/3] 微信扫码登录
@@ -109,16 +102,21 @@ function status(): void {
 // ─── main ────────────────────────────────────────────
 
 const command = process.argv[2];
-switch (command) {
-  case 'install': case 'setup': install(); break;
-  case 'login': login(); break;
-  case 'patch': case 'unpatch': {
-    // 动态导入 patch 模块，传递命令
-    process.argv[2] = command;
-    await import('./patch.js');
-    break;
+if (!command && !process.stdin.isTTY) {
+  // 无参数 + 非 TTY（MCP stdio 模式）→ 启动 MCP server
+  await import('./server.js');
+} else {
+  switch (command) {
+    case 'install': case 'setup': install(); break;
+    case 'login': login(); break;
+    case 'patch': case 'unpatch': {
+      // 动态导入 patch 模块，传递命令
+      process.argv[2] = command;
+      await import('./patch.js');
+      break;
+    }
+    case 'status': status(); break;
+    case 'help': case '--help': case '-h': case undefined: help(); break;
+    default: console.error(`未知命令: ${command}`); help(); process.exit(1);
   }
-  case 'status': status(); break;
-  case 'help': case '--help': case '-h': case undefined: help(); break;
-  default: console.error(`未知命令: ${command}`); help(); process.exit(1);
 }

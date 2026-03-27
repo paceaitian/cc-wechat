@@ -1,6 +1,6 @@
 {
   "name": "cc-wechat",
-  "version": "0.6.0",
+  "version": "0.6.8",
   "description": "WeChat channel for Claude Code via iLink Bot API",
   "type": "module",
   "bin": {
@@ -11,7 +11,9 @@
     "build": "tsc",
     "dev": "tsc --watch"
   },
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

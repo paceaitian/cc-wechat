@@ -15,33 +15,40 @@ import path from 'node:path';
 import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 
-// ─── 二进制模式补丁定义 ────────────────────────────────────
-// 每组：多个 [原始, 替换] 变体，匹配到任一即生效（适配不同平台 minify 结果）
-// Windows: PaH/lA/yf  Linux: waH/l$/SL  macOS: Po_/lT/S8
-const BINARY_PATCH_GROUPS = [
+// ─── 二进制模式补丁定义（通用正则匹配）────────────────────────
+// 使用正则匹配函数结构，不依赖具体函数名，适配所有平台和 CC 版本
+const BINARY_REGEX_PATCHES = [
   {
     desc: 'Channels feature flag (tengu_harbor)',
-    variants: [
-      ['function PaH(){return lA("tengu_harbor",!1)}', 'function PaH(){return                   !0 }'],
-      ['function waH(){return l$("tengu_harbor",!1)}', 'function waH(){return                   !0 }'],
-      ['function Po_(){return lT("tengu_harbor",!1)}', 'function Po_(){return                   !0 }'],
-    ],
+    // 匹配: function XXX(){return YYY("tengu_harbor",!1)}
+    regex: /function ([\w$]+)\(\)\{return ([\w$]+)\("tengu_harbor",!1\)\}/,
+    buildReplacement(m) {
+      const prefix = `function ${m[1]}(){return `;
+      return prefix + '!0 '.padStart(m[0].length - prefix.length - 1) + '}';
+    },
+    isPatched: (text) => !text.includes('"tengu_harbor",!1'),
   },
   {
     desc: 'Channel gate auth check',
-    variants: [
-      ['if(!yf()?.accessToken)', 'if(        false     )'],
-      ['if(!SL()?.accessToken)', 'if(        false     )'],
-      ['if(!S8()?.accessToken)', 'if(        false     )'],
-    ],
+    // 匹配: if(!XXX()?.accessToken)
+    regex: /if\(!([\w$]+)\(\)\?\.accessToken\)/,
+    buildReplacement(m) {
+      const inner = m[0].length - 4; // "if(" + ")"
+      const pad = Math.floor((inner - 5) / 2);
+      return 'if(' + ' '.repeat(pad) + 'false' + ' '.repeat(inner - 5 - pad) + ')';
+    },
+    isPatched: (text) => /if\(\s{2,}false\s+\)/.test(text),
   },
   {
     desc: 'UI noAuth display check',
-    variants: [
-      ['noAuth:!yf()?.accessToken', 'noAuth:         false    '],
-      ['noAuth:!SL()?.accessToken', 'noAuth:         false    '],
-      ['noAuth:!S8()?.accessToken', 'noAuth:         false    '],
-    ],
+    // 匹配: noAuth:!XXX()?.accessToken
+    regex: /noAuth:!([\w$]+)\(\)\?\.accessToken/,
+    buildReplacement(m) {
+      const inner = m[0].length - 7; // "noAuth:"
+      const pad = Math.floor((inner - 5) / 2);
+      return 'noAuth:' + ' '.repeat(pad) + 'false' + ' '.repeat(inner - 5 - pad);
+    },
+    isPatched: (text) => /noAuth:\s{2,}false/.test(text),
   },
 ];
 
@@ -180,22 +187,22 @@ function isBinaryFile(filePath) {
 // ─── 二进制模式 patch ──────────────────────────────────────
 
 function patchBinary(exePath) {
-  console.log('  模式: 二进制字符串搜索\n');
+  console.log('  模式: 二进制正则匹配\n');
   const buf = fs.readFileSync(exePath);
+  const text = buf.toString('latin1');
   let patched = 0, skipped = 0;
 
-  for (const { desc, variants } of BINARY_PATCH_GROUPS) {
-    let groupPatched = false, groupSkipped = false;
-
-    for (const [original, replacement] of variants) {
+  for (const { desc, regex, buildReplacement, isPatched } of BINARY_REGEX_PATCHES) {
+    const match = text.match(regex);
+    if (match) {
+      const original = match[0];
+      const replacement = buildReplacement(match);
       if (original.length !== replacement.length) {
         console.error(`  致命错误: "${desc}" 补丁长度不匹配 (${original.length} vs ${replacement.length})`);
         process.exit(1);
       }
-      const origBuf = Buffer.from(original);
-      const patchBuf = Buffer.from(replacement);
-
-      // 搜索并替换
+      const origBuf = Buffer.from(original, 'latin1');
+      const patchBuf = Buffer.from(replacement, 'latin1');
       let pos = 0, count = 0;
       while (true) {
         const idx = buf.indexOf(origBuf, pos);
@@ -204,31 +211,14 @@ function patchBinary(exePath) {
         count++;
         pos = idx + 1;
       }
-
-      if (count > 0) {
-        console.log(`  ✅ ${desc} — ${count} 处已修补`);
-        patched += count;
-        groupPatched = true;
-        break; // 一组只需匹配一个变体
-      }
-
-      // 检查是否已 patch
-      let alreadyCount = 0;
-      pos = 0;
-      while (true) {
-        const idx = buf.indexOf(patchBuf, pos);
-        if (idx === -1) break;
-        alreadyCount++;
-        pos = idx + 1;
-      }
-      if (alreadyCount > 0) {
-        groupSkipped = true;
-        break;
-      }
+      console.log(`  ✅ ${desc} — ${count} 处已修补 (${match[1]})`);
+      patched += count;
+    } else if (isPatched(text)) {
+      console.log(`  ⏭️  ${desc} — 已修补`);
+      skipped++;
+    } else {
+      console.log(`  ⚠️  ${desc} — 未找到`);
     }
-
-    if (!groupPatched && groupSkipped) { console.log(`  ⏭️  ${desc} — 已修补`); skipped++; }
-    else if (!groupPatched && !groupSkipped) { console.log(`  ⚠️  ${desc} — 未找到`); }
   }
 
   if (patched === 0 && skipped > 0) { console.log('\n  所有补丁已生效，无需操作。\n'); return; }
@@ -390,7 +380,7 @@ async function patchAst(exePath) {
       let formatter = 'naH';
       if (mapCalls.length > 0 && mapCalls[0].arguments[0]) formatter = src(mapCalls[0].arguments[0]);
 
-      const newBody = '{let A=' + getAllowedChannels + ';let q=A.length>0?A.map(' + formatter + ').join(", "):"";return{channels:A,disabled:!1,noAuth:!1,policyBlocked:!1,list:q}}';
+      const newBody = '{let A=' + getAllowedChannels + ';let q=A.length>0?A.map(' + formatter + ').join(", "):"";return{channels:A,disabled:!1,noAuth:!1,policyBlocked:!1,list:q,unmatched:[]}}';
       replacements.push({ start: noticeFunc.body.start, end: noticeFunc.body.end, replacement: newBody, name: 'notice' });
       patchCount++;
       console.log(`  ✅ UI notice ${nfName}() — disabled/noAuth/policyBlocked 全部置 false`);

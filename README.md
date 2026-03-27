@@ -44,7 +44,7 @@ Claude Code 的 Channels 功能受服务端灰度控制，部分用户需要 pat
 ### 手动安装（替代方式）
 
     npm i -g cc-wechat
-    claude mcp add -s user wechat-channel node $(which cc-wechat-server)
+    claude mcp add -s user wechat-channel -- npx -y cc-wechat@latest
     npx cc-wechat login
     claude --dangerously-load-development-channels server:wechat-channel
 
@@ -92,19 +92,55 @@ CC 更新后可能需要重新 patch。
 | getconfig | 获取 typing ticket |
 | getuploadurl | 获取 CDN 上传签名（媒体发送）|
 
+## 多账号（项目级绑定）
+
+通过 `WECHAT_PROFILE` 环境变量，不同项目可以绑定不同的微信号：
+
+```json
+// 项目 .mcp.json
+{
+  "mcpServers": {
+    "wechat-channel": {
+      "command": "npx",
+      "args": ["-y", "cc-wechat@latest"],
+      "env": { "WECHAT_PROFILE": "work" }
+    }
+  }
+}
+```
+
+每个 profile 独立存储凭证和会话：
+
+```
+~/.claude/channels/wechat/
+├── default/           # 默认账号（未设 WECHAT_PROFILE 时使用）
+│   ├── account.json
+│   └── sync-buf.txt
+├── work/              # WECHAT_PROFILE=work
+│   ├── account.json
+│   └── sync-buf.txt
+└── personal/          # WECHAT_PROFILE=personal
+    ├── account.json
+    └── sync-buf.txt
+```
+
+- 全局 `claude.json` 的配置作为默认账号，不需要设 `WECHAT_PROFILE`
+- 项目 `.mcp.json` 中声明同名 `wechat-channel` 会覆盖全局配置
+- 新 profile 首次使用需扫码登录（在 CC 中调用 login 工具，或命令行 `WECHAT_PROFILE=work npx cc-wechat login`）
+
 ## 状态文件
 
-    ~/.claude/channels/wechat/
+    ~/.claude/channels/wechat/<profile>/
     ├── account.json     # 登录凭证
     └── sync-buf.txt     # 消息同步游标
 
 ## 限制
 
-- 仅支持单账号
 - 权限审批仍需在终端（Claude Code 的固有限制）
 - 语音消息仅提取转写文本
 - Session 会过期，需重新扫码
 - 需要用户先发消息（context_token 按消息发放）
+- 部分模型（如 GLM-4.7）不支持图片输入，发送图片时需使用支持 vision 的模型
 
 ## 鸣谢
 
