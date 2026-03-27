@@ -32,8 +32,9 @@ Claude Code 的 Channels 功能受服务端灰度控制，部分用户需要 pat
 
     npx cc-channel-patch@latest
 
-- 支持 Windows/macOS/Linux
-- 支持 exe 安装版和 npm 安装版（自动检测）
+- 全平台支持：Windows / macOS / Linux / WSL
+- 全安装方式：exe 安装版、npm 安装版（自动检测）
+- 正则匹配，适配所有 CC 版本，无需手动更新
 - 如果 CC 正在运行会生成 `.patched` 文件，按提示手动替换即可
 - 恢复原版：`npx cc-channel-patch unpatch`
 
