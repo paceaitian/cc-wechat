@@ -227,6 +227,7 @@ export async function sendTyping(
 ): Promise<void> {
   const body = JSON.stringify({
     user_id: userId,
+    ilink_user_id: userId,
     typing_ticket: ticket,
     typing_status: status,
     base_info: buildBaseInfo(),
@@ -250,6 +251,7 @@ export async function getConfig(
 ): Promise<GetConfigResp> {
   const body = JSON.stringify({
     user_id: userId,
+    ilink_user_id: userId,
     ...(contextToken ? { context_token: contextToken } : {}),
     base_info: buildBaseInfo(),
   });
