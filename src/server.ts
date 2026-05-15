@@ -25,6 +25,7 @@ import { MessageItemType } from './types.js';
 let pollingActive = false;
 let pollingAbort: AbortController | null = null;
 const typingTicketCache = new Map<string, string>();
+const typingHeartbeatMap = new Map<string, NodeJS.Timeout>();
 
 // ─── Session 过期处理常量 ─────────────────────────────
 
@@ -36,6 +37,44 @@ const MAX_RETRY_DELAY_MS = 30_000;
 const SESSION_PAUSE_MS = 5 * 60_000;
 
 // ─── 辅助函数 ─────────────────────────────────────────
+
+/** 启动 typing 心跳（每 3 秒发送一次 typing(1)） */
+function startTypingHeartbeat(token: string, userId: string, ticket: string, baseUrl?: string): void {
+  // 清除已有心跳
+  stopTypingHeartbeat(userId);
+
+  // 立即发送一次
+  sendTyping(token, userId, ticket, 1, baseUrl).catch(() => {});
+
+  // 启动定时器，每 3 秒发送一次
+  const timer = setInterval(() => {
+    sendTyping(token, userId, ticket, 1, baseUrl).catch(() => {});
+  }, 3000);
+
+  typingHeartbeatMap.set(userId, timer);
+}
+
+/** 停止 typing 心跳并发送 typing(2) */
+function stopTypingHeartbeat(userId: string): void {
+  const timer = typingHeartbeatMap.get(userId);
+  if (timer) {
+    clearInterval(timer);
+    typingHeartbeatMap.delete(userId);
+    // 发送 typing(2) 通知停止输入
+    const account = getActiveAccount();
+    const ticket = typingTicketCache.get(userId);
+    if (account && ticket) {
+      sendTyping(account.token, userId, ticket, 2, account.baseUrl).catch(() => {});
+    }
+  }
+}
+
+/** 停止所有 typing 心跳（进程退出时调用） */
+function stopAllTypingHeartbeats(): void {
+  for (const [userId] of typingHeartbeatMap) {
+    stopTypingHeartbeat(userId);
+  }
+}
 
 /** 可中断的 sleep */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -210,6 +249,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     try {
+      // 停止 typing 心跳（Claude 已完成处理）
+      stopTypingHeartbeat(userId);
+
       // 发送 typing 状态（best-effort）
       try {
         let ticket = typingTicketCache.get(userId);
@@ -371,11 +413,11 @@ async function pollLoop(account: AccountData): Promise<void> {
           // 忽略
         }
 
-        // 发送 typing 状态（best-effort）
+        // 启动 typing 心跳（每 3 秒发送一次 typing(1)）
         try {
           const ticket = typingTicketCache.get(fromUser);
           if (ticket) {
-            await sendTyping(account.token, fromUser, ticket, 1, account.baseUrl);
+            startTypingHeartbeat(account.token, fromUser, ticket, account.baseUrl);
           }
         } catch {
           // 忽略
@@ -447,6 +489,11 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   process.stderr.write('[wechat-channel] MCP server started\n');
+
+  // 进程退出时清理所有心跳
+  process.on('SIGINT', () => { stopAllTypingHeartbeats(); process.exit(0); });
+  process.on('SIGTERM', () => { stopAllTypingHeartbeats(); process.exit(0); });
+  process.on('exit', () => { stopAllTypingHeartbeats(); });
 
   const account = getActiveAccount();
   if (account) {
