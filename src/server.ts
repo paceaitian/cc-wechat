@@ -40,17 +40,11 @@ const SESSION_PAUSE_MS = 5 * 60_000;
 
 /** 启动 typing 心跳（每 3 秒发送一次 typing(1)） */
 function startTypingHeartbeat(token: string, userId: string, ticket: string, baseUrl?: string): void {
-  // 清除已有心跳
   stopTypingHeartbeat(userId);
-
-  // 立即发送一次
   sendTyping(token, userId, ticket, 1, baseUrl).catch(() => {});
-
-  // 启动定时器，每 3 秒发送一次
   const timer = setInterval(() => {
     sendTyping(token, userId, ticket, 1, baseUrl).catch(() => {});
   }, 3000);
-
   typingHeartbeatMap.set(userId, timer);
 }
 
@@ -60,7 +54,6 @@ function stopTypingHeartbeat(userId: string): void {
   if (timer) {
     clearInterval(timer);
     typingHeartbeatMap.delete(userId);
-    // 发送 typing(2) 通知停止输入
     const account = getActiveAccount();
     const ticket = typingTicketCache.get(userId);
     if (account && ticket) {
