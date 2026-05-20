@@ -25,6 +25,7 @@ import { MessageItemType } from './types.js';
 let pollingActive = false;
 let pollingAbort: AbortController | null = null;
 const typingTicketCache = new Map<string, string>();
+const typingHeartbeatMap = new Map<string, NodeJS.Timeout>();
 
 // ─── Session 过期处理常量 ─────────────────────────────
 
@@ -36,6 +37,37 @@ const MAX_RETRY_DELAY_MS = 30_000;
 const SESSION_PAUSE_MS = 5 * 60_000;
 
 // ─── 辅助函数 ─────────────────────────────────────────
+
+/** 启动 typing 心跳（每 3 秒发送一次 typing(1)） */
+function startTypingHeartbeat(token: string, userId: string, ticket: string, baseUrl?: string): void {
+  stopTypingHeartbeat(userId);
+  sendTyping(token, userId, ticket, 1, baseUrl).catch(() => {});
+  const timer = setInterval(() => {
+    sendTyping(token, userId, ticket, 1, baseUrl).catch(() => {});
+  }, 3000);
+  typingHeartbeatMap.set(userId, timer);
+}
+
+/** 停止 typing 心跳并发送 typing(2) */
+function stopTypingHeartbeat(userId: string): void {
+  const timer = typingHeartbeatMap.get(userId);
+  if (timer) {
+    clearInterval(timer);
+    typingHeartbeatMap.delete(userId);
+    const account = getActiveAccount();
+    const ticket = typingTicketCache.get(userId);
+    if (account && ticket) {
+      sendTyping(account.token, userId, ticket, 2, account.baseUrl).catch(() => {});
+    }
+  }
+}
+
+/** 停止所有 typing 心跳（进程退出时调用） */
+function stopAllTypingHeartbeats(): void {
+  for (const [userId] of typingHeartbeatMap) {
+    stopTypingHeartbeat(userId);
+  }
+}
 
 /** 可中断的 sleep */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -210,6 +242,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     try {
+      // 停止 typing 心跳（Claude 已完成处理）
+      stopTypingHeartbeat(userId);
+
       // 发送 typing 状态（best-effort）
       try {
         let ticket = typingTicketCache.get(userId);
@@ -288,6 +323,9 @@ async function pollLoop(account: AccountData): Promise<void> {
   let sessionRetries = 0;
   let retryDelay = INITIAL_RETRY_DELAY_MS;
   let nextTimeoutMs: number | undefined;
+  // 消息去重：缓存最近处理过的 message_id（最多保留 1000 个）
+  const processedMessageIds = new Set<string>();
+  const MAX_PROCESSED_IDS = 1000;
 
   while (pollingActive && !pollingAbort?.signal.aborted) {
     try {
@@ -355,6 +393,22 @@ async function pollLoop(account: AccountData): Promise<void> {
       for (const msg of resp.msgs ?? []) {
         if (msg.message_type !== 1) continue;
 
+        // 消息去重：跳过已处理的 message_id
+        const msgId = String(msg.message_id ?? '');
+        if (msgId && processedMessageIds.has(msgId)) {
+          process.stderr.write(`[wechat-channel] 跳过重复消息: ${msgId}\n`);
+          continue;
+        }
+        // 记录已处理的 message_id
+        if (msgId) {
+          processedMessageIds.add(msgId);
+          // 限制缓存大小，移除最旧的条目
+          if (processedMessageIds.size > MAX_PROCESSED_IDS) {
+            const firstId = processedMessageIds.values().next().value;
+            processedMessageIds.delete(firstId);
+          }
+        }
+
         const fromUser = msg.from_user_id ?? '';
         const contextToken = msg.context_token ?? '';
 
@@ -371,11 +425,11 @@ async function pollLoop(account: AccountData): Promise<void> {
           // 忽略
         }
 
-        // 发送 typing 状态（best-effort）
+        // 启动 typing 心跳（每 3 秒发送一次 typing(1)）
         try {
           const ticket = typingTicketCache.get(fromUser);
           if (ticket) {
-            await sendTyping(account.token, fromUser, ticket, 1, account.baseUrl);
+            startTypingHeartbeat(account.token, fromUser, ticket, account.baseUrl);
           }
         } catch {
           // 忽略
@@ -447,6 +501,11 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   process.stderr.write('[wechat-channel] MCP server started\n');
+
+  // 进程退出时清理所有心跳
+  process.on('SIGINT', () => { stopAllTypingHeartbeats(); process.exit(0); });
+  process.on('SIGTERM', () => { stopAllTypingHeartbeats(); process.exit(0); });
+  process.on('exit', () => { stopAllTypingHeartbeats(); });
 
   const account = getActiveAccount();
   if (account) {
