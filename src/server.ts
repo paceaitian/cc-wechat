@@ -323,6 +323,9 @@ async function pollLoop(account: AccountData): Promise<void> {
   let sessionRetries = 0;
   let retryDelay = INITIAL_RETRY_DELAY_MS;
   let nextTimeoutMs: number | undefined;
+  // 消息去重：缓存最近处理过的 message_id（最多保留 1000 个）
+  const processedMessageIds = new Set<string>();
+  const MAX_PROCESSED_IDS = 1000;
 
   while (pollingActive && !pollingAbort?.signal.aborted) {
     try {
@@ -389,6 +392,22 @@ async function pollLoop(account: AccountData): Promise<void> {
       // 处理消息（仅用户消息 message_type === 1）
       for (const msg of resp.msgs ?? []) {
         if (msg.message_type !== 1) continue;
+
+        // 消息去重：跳过已处理的 message_id
+        const msgId = String(msg.message_id ?? '');
+        if (msgId && processedMessageIds.has(msgId)) {
+          process.stderr.write(`[wechat-channel] 跳过重复消息: ${msgId}\n`);
+          continue;
+        }
+        // 记录已处理的 message_id
+        if (msgId) {
+          processedMessageIds.add(msgId);
+          // 限制缓存大小，移除最旧的条目
+          if (processedMessageIds.size > MAX_PROCESSED_IDS) {
+            const firstId = processedMessageIds.values().next().value;
+            processedMessageIds.delete(firstId);
+          }
+        }
 
         const fromUser = msg.from_user_id ?? '';
         const contextToken = msg.context_token ?? '';
